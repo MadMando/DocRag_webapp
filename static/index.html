@@ -1,0 +1,210 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>DocRAG Web</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
+      fieldset { margin: 16px 0; padding: 12px; }
+      label { display: block; margin: 6px 0 4px; font-weight: 600; }
+      input, button, textarea { width: 100%; padding: 8px; margin-bottom: 8px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      #answer { min-height: 220px; white-space: pre-wrap; }
+      .small { font-size: 12px; color: #666; }
+      .status { display: flex; align-items: center; gap: 10px; }
+      progress { width: 100%; height: 16px; }
+      .ok { color: #0a7; }
+      .err { color: #c33; }
+    </style>
+  </head>
+  <body>
+    <h1>DocRAG Web</h1>
+    <div class="small">Docling → Chroma → Ollama (local)</div>
+
+    <fieldset>
+      <legend>Status</legend>
+      <div class="status">
+        <progress id="prog" max="100" value="0"></progress>
+        <span id="pmsg">Idle</span>
+      </div>
+      <div id="perr" class="err"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Settings</legend>
+      <div class="row">
+        <div>
+          <label>Persist</label>
+          <input id="persist" value="./.chroma" />
+        </div>
+        <div>
+          <label>Collection</label>
+          <input id="collection" value="web" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Embed model</label>
+          <input id="embed" value="nomic-embed-text" />
+        </div>
+        <div>
+          <label>LLM model</label>
+          <input id="llm" value="llama3.2:1b" />
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Ingest</legend>
+      <label>URL</label>
+      <input id="url" placeholder="https://arxiv.org/pdf/2408.09869" />
+      <button id="ingest-url">Ingest URL (stream)</button>
+
+      <label>File</label>
+      <input id="file" type="file" />
+      <button id="ingest-file">Ingest File (stream)</button>
+      <div id="ingest-status" class="small"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Ask</legend>
+      <label>Question</label>
+      <input id="question" value="Give a concise bullet summary of the paper's main contributions." />
+      <button id="ask">Ask (non-streaming)</button>
+      <button id="ask-stream">Ask (streaming)</button>
+      <label>Answer</label>
+      <textarea id="answer" placeholder="Answer will appear here..."></textarea>
+    </fieldset>
+
+    <script>
+      const prog = document.getElementById('prog');
+      const pmsg = document.getElementById('pmsg');
+      const perr = document.getElementById('perr');
+
+      function resetStatus(){
+        prog.value = 0;
+        pmsg.textContent = 'Idle';
+        perr.textContent = '';
+      }
+      function setStatus(v,msg){ prog.value = v; pmsg.textContent = msg || ''; }
+      function setError(msg){ perr.textContent = msg || ''; }
+
+      function v(id){ return document.getElementById(id).value; }
+      function setText(id, t){ document.getElementById(id).textContent = t; }
+      function setAns(t){ const el = document.getElementById('answer'); el.value = t; }
+      function appendAns(t){ const el = document.getElementById('answer'); el.value += t; el.scrollTop = el.scrollHeight; }
+
+      async function ingestURLStream(){
+        resetStatus();
+        setStatus(1, 'Connecting…');
+        const params = new URLSearchParams({
+          url: v('url'),
+          persist: v('persist'),
+          collection: v('collection'),
+          embed_model: v('embed'),
+          chunk_chars: '900',
+          chunk_overlap: '180'
+        });
+        const r = await fetch('/api/ingest/url_stream?' + params.toString());
+        if(!r.ok || !r.body){ setError('Stream failed to start'); return; }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while(true){
+          const { value, done } = await reader.read();
+          if(done) break;
+          buf += dec.decode(value, { stream:true });
+          // Parse SSE lines
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+          for(const evt of parts){
+            const line = evt.split('\n').find(x=>x.startsWith('data: '));
+            if(!line) continue;
+            const payload = JSON.parse(line.slice(6));
+            if(payload.progress !== undefined) setStatus(payload.progress, payload.msg || '');
+            if(payload.phase === 'error'){ setError(payload.error || 'Unknown error'); }
+            if(payload.phase === 'done'){ setStatus(100, 'Done'); }
+          }
+        }
+      }
+
+      async function ingestFileStream(){
+        resetStatus();
+        setStatus(1, 'Uploading…');
+        const f = document.getElementById('file').files[0];
+        if(!f){ setError('Choose a file first.'); return; }
+        const fd = new FormData();
+        fd.set('file', f);
+        fd.set('persist', v('persist'));
+        fd.set('collection', v('collection'));
+        fd.set('embed_model', v('embed'));
+        fd.set('chunk_chars', '900');
+        fd.set('chunk_overlap', '180');
+
+        const r = await fetch('/api/ingest/file_stream', { method:'POST', body: fd });
+        if(!r.ok || !r.body){ setError('Stream failed to start'); return; }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while(true){
+          const { value, done } = await reader.read();
+          if(done) break;
+          buf += dec.decode(value, { stream:true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+          for(const evt of parts){
+            const line = evt.split('\n').find(x=>x.startsWith('data: '));
+            if(!line) continue;
+            const payload = JSON.parse(line.slice(6));
+            if(payload.progress !== undefined) setStatus(payload.progress, payload.msg || '');
+            if(payload.phase === 'error'){ setError(payload.error || 'Unknown error'); }
+            if(payload.phase === 'done'){ setStatus(100, 'Done'); }
+          }
+        }
+      }
+
+      async function ask(){
+        resetStatus();
+        const fd = new FormData();
+        fd.set('question', v('question'));
+        fd.set('persist', v('persist'));
+        fd.set('collection', v('collection'));
+        fd.set('llm_model', v('llm'));
+        setAns('');
+        const r = await fetch('/api/ask', { method:'POST', body: fd });
+        const d = await r.json();
+        if(!r.ok){ setError(d.detail || 'Unknown error'); return; }
+        setAns(d.answer || '');
+      }
+
+      async function askStream(){
+        resetStatus();
+        const fd = new FormData();
+        fd.set('question', v('question'));
+        fd.set('persist', v('persist'));
+        fd.set('collection', v('collection'));
+        fd.set('llm_model', v('llm'));
+        setAns('');
+        const r = await fetch('/api/ask_stream', { method:'POST', body: fd });
+        if(!r.ok || !r.body){
+          try{ const d = await r.json(); setError(d.detail || 'Unknown'); }
+          catch{ setError('Streaming failed.'); }
+          return;
+        }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        while(true){
+          const { value, done } = await reader.read();
+          if(done) break;
+          appendAns(dec.decode(value, { stream: true }));
+        }
+      }
+
+      document.getElementById('ingest-url').onclick = ingestURLStream;
+      document.getElementById('ingest-file').onclick = ingestFileStream;
+      document.getElementById('ask').onclick = ask;
+      document.getElementById('ask-stream').onclick = askStream;
+    </script>
+  </body>
+</html>
