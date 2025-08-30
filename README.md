@@ -49,7 +49,7 @@ It wraps around the [docrag-llm](https://pypi.org/project/docrag-llm) package, p
 
 3. Start the server:
    ```bash
-   uvicorn app:app --reload --host 0.0.0.0 --port 8000
+   uvicorn app:app --reload --host localhost --port 8000
    ```
 
 4. Open the web UI in your browser:
