@@ -31,9 +31,9 @@ DEFAULT_PERSIST = "./.chroma"
 DEFAULT_COLLECTION = "web"
 DEFAULT_EMBED = "nomic-embed-text"
 DEFAULT_LLM = "llama3.2:1b"
-DEFAULT_CHUNK_CHARS = 900
-DEFAULT_CHUNK_OVERLAP = 180
-DEFAULT_TOP_K = 6
+DEFAULT_CHUNK_CHARS = 500
+DEFAULT_CHUNK_OVERLAP = 100
+DEFAULT_TOP_K = 2
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "static"  # must contain index.html
