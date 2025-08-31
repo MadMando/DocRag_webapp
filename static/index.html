@@ -1,210 +1,345 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
+    <meta charset="utf-8"/>
     <title>DocRAG Web</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
-      fieldset { margin: 16px 0; padding: 12px; }
-      label { display: block; margin: 6px 0 4px; font-weight: 600; }
-      input, button, textarea { width: 100%; padding: 8px; margin-bottom: 8px; }
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-      #answer { min-height: 220px; white-space: pre-wrap; }
-      .small { font-size: 12px; color: #666; }
-      .status { display: flex; align-items: center; gap: 10px; }
-      progress { width: 100%; height: 16px; }
-      .ok { color: #0a7; }
-      .err { color: #c33; }
+      :root{
+        --bg:#0f1222; --panel:#151935; --panel2:#10142c;
+        --text:#eef1ff; --muted:#9aa3c7; --accent:#6aa7ff; --accent2:#8b7bff;
+        --ok:#26c281; --err:#ff6b6b;
+      }
+      *{box-sizing:border-box}
+      body{
+        margin:0; font-family: ui-sans-serif,system-ui,Segoe UI,Roboto,Arial;
+        color:var(--text); background:
+          radial-gradient(1200px 700px at 10% -10%, #1b2060 0%, transparent 70%),
+          radial-gradient(1000px 600px at 110% 0%, #2a1860 0%, transparent 70%),
+          var(--bg);
+      }
+      .wrap{max-width:1100px;margin:0 auto;padding:28px}
+      header{
+        display:flex;align-items:center;justify-content:space-between;margin-bottom:18px
+      }
+      .brand{
+        display:flex;align-items:center;gap:14px
+      }
+      .logo{
+        width:40px;height:40px;border-radius:12px;
+        background: linear-gradient(135deg,var(--accent),var(--accent2));
+        box-shadow:0 0 24px rgba(138,120,255,.35);
+      }
+      h1{font-size:22px;margin:0}
+      .tag{color:var(--muted);font-size:13px;margin-top:4px}
+      .grid{display:grid;gap:16px}
+      @media(min-width:980px){ .grid{grid-template-columns:1.1fr .9fr} }
+      .card{
+        background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));
+        border:1px solid rgba(255,255,255,.06); border-radius:14px; padding:16px;
+        box-shadow:0 10px 30px rgba(0,0,0,.25)
+      }
+      .section-title{font-weight:700;margin:0 0 12px 0;font-size:14px;letter-spacing:.4px}
+      label{display:block;font-size:12px;color:var(--muted);margin:10px 0 6px}
+      input,select,textarea,button{
+        width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.08);
+        background:var(--panel2); color:var(--text); font-size:14px; outline:none
+      }
+      input:focus,select:focus,textarea:focus{ border-color: var(--accent) }
+      textarea{min-height:210px;resize:vertical}
+      .row{display:grid;gap:12px}
+      @media(min-width:620px){ .row-2{grid-template-columns:1fr 1fr} .row-3{grid-template-columns:1fr 1fr 1fr} }
+      .btn{
+        border:1px solid rgba(255,255,255,.12); background:linear-gradient(180deg,#1c214a,#131737);
+        cursor:pointer; transition:transform .06s ease, box-shadow .2s ease
+      }
+      .btn:hover{ box-shadow:0 6px 20px rgba(112,132,255,.25) }
+      .btn:active{ transform: translateY(1px) }
+      .btn.primary{
+        background:linear-gradient(180deg, var(--accent), #4979ff);
+        border-color:transparent; color:#0a1027; font-weight:700
+      }
+      .muted{color:var(--muted);font-size:12px}
+      .ok{color:var(--ok)} .err{color:var(--err)}
+
+      /* progress bar */
+      .progress{height:10px;background:#0e1230;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+      .bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .15s ease}
+
+      /* circular spinner */
+      .spinner{
+        width:22px;height:22px;border-radius:50%;
+        border:3px solid rgba(255,255,255,.15); border-top-color:var(--accent);
+        animation:spin .9s linear infinite; display:inline-block; vertical-align:-4px; margin-right:8px
+      }
+      @keyframes spin{to{transform:rotate(360deg)}}
+
+      .status-line{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:13px;color:var(--muted)}
+      .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
     </style>
   </head>
   <body>
-    <h1>DocRAG Web</h1>
-    <div class="small">Docling → Chroma → Ollama (local)</div>
+    <div class="wrap">
+      <header>
+        <div class="brand">
+          <div class="logo"></div>
+          <div>
+            <h1>DocRAG Web</h1>
+            <div class="tag">Docling → Chroma → Ollama (local)</div>
+          </div>
+        </div>
+      </header>
 
-    <fieldset>
-      <legend>Status</legend>
-      <div class="status">
-        <progress id="prog" max="100" value="0"></progress>
-        <span id="pmsg">Idle</span>
+      <div class="grid">
+        <section class="card">
+          <div class="section-title">Settings</div>
+          <div class="row row-2">
+            <div>
+              <label>Persist path</label>
+              <input id="persist" value="./.chroma"/>
+            </div>
+            <div>
+              <label>Collection</label>
+              <input id="collection" value="web"/>
+            </div>
+          </div>
+          <div class="row row-2">
+            <div>
+              <label>Embed model</label>
+              <input id="embed" value="nomic-embed-text"/>
+            </div>
+            <div>
+              <label>LLM Model</label>
+              <select id="llm"><option value="">Loading models…</option></select>
+              <div class="muted" id="llmHint"></div>
+              <input type="text" id="llm_custom" name="llm_custom" placeholder="Or type custom model to override..." style="margin-top: 8px;">
+            </div>
+          </div>
+
+          <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:14px 0">
+
+          <div class="section-title">Ingest</div>
+          <label>URL</label>
+          <input id="url" placeholder="https://arxiv.org/pdf/2508.20755"/>
+          <div class="actions">
+            <button class="btn primary" id="ingest-url">Ingest URL (stream)</button>
+          </div>
+
+          <label style="margin-top:10px">File</label>
+          <input type="file" id="file"/>
+          <div class="actions">
+            <button class="btn" id="ingest-file">Ingest File (stream)</button>
+          </div>
+
+          <div style="margin-top:12px">
+            <div class="progress"><div id="ingest-bar" class="bar"></div></div>
+            <div class="status-line"><span id="ingest-msg">Idle</span><span id="ingest-err" class="err"></span></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="section-title">Ask</div>
+          <label>Question</label>
+          <input id="question" value="Give a short summary and 5 bullet points of the main idea."/>
+          <div class="actions">
+            <button class="btn primary" id="ask">Ask</button>
+            <button class="btn" id="ask-stream">Ask (stream)</button>
+          </div>
+          <div class="status-line"><span id="ask-status">Idle</span><span id="ask-err" class="err"></span></div>
+          <label style="margin-top:12px">Answer</label>
+          <textarea id="answer" placeholder="Answer will appear here…"></textarea>
+        </section>
       </div>
-      <div id="perr" class="err"></div>
-    </fieldset>
 
-    <fieldset>
-      <legend>Settings</legend>
-      <div class="row">
-        <div>
-          <label>Persist</label>
-          <input id="persist" value="./.chroma" />
-        </div>
-        <div>
-          <label>Collection</label>
-          <input id="collection" value="web" />
-        </div>
+      <div class="muted" style="margin-top:12px">
+        Tip: set defaults in the backend, keep LLM small for fast replies (e.g. <code>llama3.2:1b</code>)
       </div>
-      <div class="row">
-        <div>
-          <label>Embed model</label>
-          <input id="embed" value="nomic-embed-text" />
-        </div>
-        <div>
-          <label>LLM model</label>
-          <input id="llm" value="llama3.2:1b" />
-        </div>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Ingest</legend>
-      <label>URL</label>
-      <input id="url" placeholder="https://arxiv.org/pdf/2508.20755" />
-      <button id="ingest-url">Ingest URL (stream)</button>
-
-      <label>File</label>
-      <input id="file" type="file" />
-      <button id="ingest-file">Ingest File (stream)</button>
-      <div id="ingest-status" class="small"></div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Ask</legend>
-      <label>Question</label>
-      <input id="question" value="Give me a short summary and 5 bullets points of the main idea. " />
-      <button id="ask">Ask (non-streaming)</button>
-      <button id="ask-stream">Ask (streaming)</button>
-      <label>Answer</label>
-      <textarea id="answer" placeholder="Answer will appear here..."></textarea>
-    </fieldset>
+    </div>
 
     <script>
-      const prog = document.getElementById('prog');
-      const pmsg = document.getElementById('pmsg');
-      const perr = document.getElementById('perr');
+      const el = (id)=>document.getElementById(id);
+      const state = { busy:false };
 
-      function resetStatus(){
-        prog.value = 0;
-        pmsg.textContent = 'Idle';
-        perr.textContent = '';
+      // ---------- UPDATED: Added back the loadModels function ----------
+      async function loadModels(){
+        try{
+          const r = await fetch('/api/models'); // Or '/api/tags' if you prefer that name
+          if(!r.ok) throw new Error('HTTP '+r.status);
+          const d = await r.json();
+          const models = (d.models||[]).sort();
+          const llm = el('llm');
+          llm.innerHTML = '';
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.textContent = models.length ? 'Select a model…' : 'No models available';
+          placeholder.disabled = !!models.length;
+          placeholder.selected = true;
+          llm.appendChild(placeholder);
+          for(const m of models){
+            const o = document.createElement('option');
+            o.value = m; o.textContent = m; llm.appendChild(o);
+          }
+          el('llmHint').textContent = models.length ? 'Models from Ollama' : 'Run `ollama list` to expose models.';
+        }catch(e){
+          el('llmHint').textContent = 'Could not load models.';
+        }
       }
-      function setStatus(v,msg){ prog.value = v; pmsg.textContent = msg || ''; }
-      function setError(msg){ perr.textContent = msg || ''; }
 
-      function v(id){ return document.getElementById(id).value; }
-      function setText(id, t){ document.getElementById(id).textContent = t; }
-      function setAns(t){ const el = document.getElementById('answer'); el.value = t; }
-      function appendAns(t){ const el = document.getElementById('answer'); el.value += t; el.scrollTop = el.scrollHeight; }
+      // ---------- UPDATED: The getVals function now prioritizes the text box ----------
+      function getVals(){
+        const customLlm = el('llm_custom').value.trim();
+        const selectedLlm = el('llm').value;
+        return {
+          persist: el('persist').value,
+          collection: el('collection').value,
+          embed: el('embed').value,
+          llm: customLlm || selectedLlm || 'llama3.2:1b',
+        }
+      }
+
+      // ---------- Ingest (SSE progress) ----------
+      function setIngestProgress(pct,msg){ el('ingest-bar').style.width = (pct||0)+'%'; el('ingest-msg').textContent = msg||''; }
+      function setIngestErr(t){ el('ingest-err').textContent = t||''; }
 
       async function ingestURLStream(){
-        resetStatus();
-        setStatus(1, 'Connecting…');
+        if(state.busy) return;
+        state.busy = true;
+        btnLock(true);
+        setIngestErr(''); setIngestProgress(1,'Connecting…');
+        const v = getVals();
         const params = new URLSearchParams({
-          url: v('url'),
-          persist: v('persist'),
-          collection: v('collection'),
-          embed_model: v('embed'),
+          url: el('url').value.trim(),
+          persist: v.persist,
+          collection: v.collection,
+          embed_model: v.embed,
           chunk_chars: '500',
           chunk_overlap: '100'
         });
-        const r = await fetch('/api/ingest/url_stream?' + params.toString());
-        if(!r.ok || !r.body){ setError('Stream failed to start'); return; }
-        const reader = r.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        while(true){
-          const { value, done } = await reader.read();
-          if(done) break;
-          buf += dec.decode(value, { stream:true });
-          // Parse SSE lines
-          const parts = buf.split('\n\n');
-          buf = parts.pop() || '';
-          for(const evt of parts){
-            const line = evt.split('\n').find(x=>x.startsWith('data: '));
-            if(!line) continue;
-            const payload = JSON.parse(line.slice(6));
-            if(payload.progress !== undefined) setStatus(payload.progress, payload.msg || '');
-            if(payload.phase === 'error'){ setError(payload.error || 'Unknown error'); }
-            if(payload.phase === 'done'){ setStatus(100, 'Done'); }
+        try{
+          const r = await fetch('/api/ingest/url_stream?'+params.toString());
+          if(!r.ok || !r.body){ throw new Error('Stream failed to start'); }
+          const reader = r.body.getReader(); const dec = new TextDecoder(); let buf='';
+          while(true){
+            const {value,done} = await reader.read(); if(done) break;
+            buf += dec.decode(value,{stream:true});
+            const parts = buf.split('\n\n'); buf = parts.pop() || '';
+            for(const evt of parts){
+              const line = evt.split('\n').find(x=>x.startsWith('data: '));
+              if(!line) continue;
+              const payload = JSON.parse(line.slice(6));
+              if(payload.progress !== undefined) setIngestProgress(payload.progress, payload.msg||'');
+              if(payload.phase === 'error') setIngestErr(payload.error || 'Unknown error');
+              if(payload.phase === 'done') setIngestProgress(100,'Done');
+            }
           }
-        }
+        }catch(e){ setIngestErr(String(e)); }
+        finally{ state.busy=false; btnLock(false); }
       }
 
       async function ingestFileStream(){
-        resetStatus();
-        setStatus(1, 'Uploading…');
-        const f = document.getElementById('file').files[0];
-        if(!f){ setError('Choose a file first.'); return; }
+        if(state.busy) return;
+        state.busy = true;
+        btnLock(true);
+        setIngestErr(''); setIngestProgress(1,'Uploading…');
+        const v = getVals();
+        const f = el('file').files[0];
+        if(!f){ setIngestErr('Choose a file first.'); state.busy=false; btnLock(false); return; }
         const fd = new FormData();
         fd.set('file', f);
-        fd.set('persist', v('persist'));
-        fd.set('collection', v('collection'));
-        fd.set('embed_model', v('embed'));
+        fd.set('persist', v.persist);
+        fd.set('collection', v.collection);
+        fd.set('embed_model', v.embed);
         fd.set('chunk_chars', '500');
         fd.set('chunk_overlap', '100');
 
-        const r = await fetch('/api/ingest/file_stream', { method:'POST', body: fd });
-        if(!r.ok || !r.body){ setError('Stream failed to start'); return; }
-        const reader = r.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        while(true){
-          const { value, done } = await reader.read();
-          if(done) break;
-          buf += dec.decode(value, { stream:true });
-          const parts = buf.split('\n\n');
-          buf = parts.pop() || '';
-          for(const evt of parts){
-            const line = evt.split('\n').find(x=>x.startsWith('data: '));
-            if(!line) continue;
-            const payload = JSON.parse(line.slice(6));
-            if(payload.progress !== undefined) setStatus(payload.progress, payload.msg || '');
-            if(payload.phase === 'error'){ setError(payload.error || 'Unknown error'); }
-            if(payload.phase === 'done'){ setStatus(100, 'Done'); }
+        try{
+          const r = await fetch('/api/ingest/file_stream',{method:'POST',body:fd});
+          if(!r.ok || !r.body){ throw new Error('Stream failed to start'); }
+          const reader = r.body.getReader(); const dec = new TextDecoder(); let buf='';
+          while(true){
+            const {value,done} = await reader.read(); if(done) break;
+            buf += dec.decode(value,{stream:true});
+            const parts = buf.split('\n\n'); buf = parts.pop() || '';
+            for(const evt of parts){
+              const line = evt.split('\n').find(x=>x.startsWith('data: '));
+              if(!line) continue;
+              const payload = JSON.parse(line.slice(6));
+              if(payload.progress !== undefined) setIngestProgress(payload.progress, payload.msg||'');
+              if(payload.phase === 'error') setIngestErr(payload.error || 'Unknown error');
+              if(payload.phase === 'done') setIngestProgress(100,'Done');
+            }
           }
-        }
+        }catch(e){ setIngestErr(String(e)); }
+        finally{ state.busy=false; btnLock(false); }
       }
 
+      // ---------- Ask ----------
+      function setAskBusy(on){
+        const s = el('ask-status');
+        if(on){ s.innerHTML = '<span class="spinner"></span>Thinking…'; }
+        else{ s.textContent = 'Idle'; }
+      }
+      function setAskErr(t){ el('ask-err').textContent = t||''; }
+
       async function ask(){
-        resetStatus();
+        if(state.busy) return;
+        state.busy = true; btnLock(true); setAskErr(''); setAskBusy(true);
+        el('answer').value = '';
+        const v = getVals();
         const fd = new FormData();
-        fd.set('question', v('question'));
-        fd.set('persist', v('persist'));
-        fd.set('collection', v('collection'));
-        fd.set('llm_model', v('llm'));
-        setAns('');
-        const r = await fetch('/api/ask', { method:'POST', body: fd });
-        const d = await r.json();
-        if(!r.ok){ setError(d.detail || 'Unknown error'); return; }
-        setAns(d.answer || '');
+        fd.set('question', el('question').value);
+        fd.set('persist', v.persist);
+        fd.set('collection', v.collection);
+        fd.set('llm_model', v.llm);
+        try{
+          const r = await fetch('/api/ask',{method:'POST', body:fd});
+          const d = await r.json();
+          if(!r.ok) throw new Error(d.detail || 'Ask failed');
+          el('answer').value = d.answer || '';
+        }catch(e){ setAskErr(String(e)); }
+        finally{ setAskBusy(false); state.busy=false; btnLock(false); }
       }
 
       async function askStream(){
-        resetStatus();
+        if(state.busy) return;
+        state.busy = true; btnLock(true); setAskErr(''); setAskBusy(true);
+        el('answer').value = '';
+        const v = getVals();
         const fd = new FormData();
-        fd.set('question', v('question'));
-        fd.set('persist', v('persist'));
-        fd.set('collection', v('collection'));
-        fd.set('llm_model', v('llm'));
-        setAns('');
-        const r = await fetch('/api/ask_stream', { method:'POST', body: fd });
-        if(!r.ok || !r.body){
-          try{ const d = await r.json(); setError(d.detail || 'Unknown'); }
-          catch{ setError('Streaming failed.'); }
-          return;
-        }
-        const reader = r.body.getReader();
-        const dec = new TextDecoder();
-        while(true){
-          const { value, done } = await reader.read();
-          if(done) break;
-          appendAns(dec.decode(value, { stream: true }));
-        }
+        fd.set('question', el('question').value);
+        fd.set('persist', v.persist);
+        fd.set('collection', v.collection);
+        fd.set('llm_model', v.llm);
+        try{
+          const r = await fetch('/api/ask_stream',{method:'POST', body:fd});
+          if(!r.ok || !r.body){
+            try{ const d = await r.json(); throw new Error(d.detail || 'Stream failed'); }
+            catch{ throw new Error('Stream failed'); }
+          }
+          const reader = r.body.getReader(); const dec=new TextDecoder();
+          while(true){
+            const {value,done} = await reader.read(); if(done) break;
+            el('answer').value += dec.decode(value,{stream:true});
+            el('answer').scrollTop = el('answer').scrollHeight;
+          }
+        }catch(e){ setAskErr(String(e)); }
+        finally{ setAskBusy(false); state.busy=false; btnLock(false); }
       }
 
-      document.getElementById('ingest-url').onclick = ingestURLStream;
-      document.getElementById('ingest-file').onclick = ingestFileStream;
-      document.getElementById('ask').onclick = ask;
-      document.getElementById('ask-stream').onclick = askStream;
+      function btnLock(disabled){
+        ['ingest-url','ingest-file','ask','ask-stream'].forEach(id=>{
+          const b = el(id); if(b) b.disabled = disabled;
+        });
+      }
+
+      // wire up
+      el('ingest-url').onclick = ingestURLStream;
+      el('ingest-file').onclick = ingestFileStream;
+      el('ask').onclick = ask;
+      el('ask-stream').onclick = askStream;
+
+      // boot
+      loadModels(); // UPDATED: Added back the call to load models on page start
     </script>
   </body>
 </html>

@@ -7,11 +7,11 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterable, List, Tuple
+from typing import Any, Dict, Generator, List
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 # ---- Docling
@@ -27,18 +27,18 @@ import ollama
 # =========================
 # Config
 # =========================
-DEFAULT_PERSIST = "./.chroma"
-DEFAULT_COLLECTION = "web"
-DEFAULT_EMBED = "nomic-embed-text"
-DEFAULT_LLM = "llama3.2:1b"
-DEFAULT_CHUNK_CHARS = 500
-DEFAULT_CHUNK_OVERLAP = 100
-DEFAULT_TOP_K = 2
+DEFAULT_PERSIST = os.getenv("DOCRAG_PERSIST", "./.chroma")
+DEFAULT_COLLECTION = os.getenv("DOCRAG_COLLECTION", "web")
+DEFAULT_EMBED = os.getenv("DOCRAG_EMBED", "nomic-embed-text")
+DEFAULT_LLM = os.getenv("DOCRAG_LLM", "llama3.2:1b")
+DEFAULT_CHUNK_CHARS = int(os.getenv("DOCRAG_CHUNK_CHARS", "500"))
+DEFAULT_CHUNK_OVERLAP = int(os.getenv("DOCRAG_CHUNK_OVERLAP", "100"))
+DEFAULT_TOP_K = int(os.getenv("DOCRAG_TOP_K", "2"))
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "static"  # must contain index.html
 
-app = FastAPI(title="DocRAG Web API", version="1.1")
+app = FastAPI(title="DocRAG Web API", version="1.2")
 
 # CORS for local dev (tighten in prod)
 app.add_middleware(
@@ -48,6 +48,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =========================
+# Startup: ensure frontend exists
+# =========================
+@app.on_event("startup")
+def _ensure_frontend():
+    FRONTEND_DIR.mkdir(parents=True, exist_ok=True)
+    index = FRONTEND_DIR / "index.html"
+    if not index.exists():
+        index.write_text(
+            """<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DocRAG Web</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2rem}
+code{background:#f4f4f4;padding:.2rem .4rem;border-radius:.25rem}</style>
+</head><body>
+<h1>DocRAG Web</h1>
+<p>Frontend placeholder. Put your <code>index.html</code> here: <code>static/index.html</code>.</p>
+<p>Try the API: <code>GET /api/health</code></p>
+</body></html>""",
+            encoding="utf-8",
+        )
+
 
 # =========================
 # Helpers
@@ -118,11 +143,7 @@ def _docling_convert(source: str) -> str:
     return md
 
 
-def _index_chunks(
-    col,
-    chunks: List[str],
-    source_tag: str,
-) -> int:
+def _index_chunks(col, chunks: List[str], source_tag: str) -> int:
     # Deterministic IDs so re-ingest won’t duplicate
     ids = [f"{source_tag}_{i:06d}" for i in range(len(chunks))]
     # Best-effort delete first (ignore if not present)
@@ -147,9 +168,53 @@ def _retrieve(col, query: str, top_k: int) -> List[str]:
 # =========================
 # API
 # =========================
-@app.get("/api/health")
-def health() -> JSONResponse:
-    return JSONResponse({"status": "ok", "frontend_dir": str(FRONTEND_DIR)})
+
+import os
+import logging
+import ollama
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+# --- Configuration ---
+# Use an environment variable for the host, with a sensible default.
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+# Configure logging to see output in your terminal.
+logging.basicConfig(level=logging.INFO)
+
+# Create a single, explicit client for the app to use.
+app = FastAPI()
+client = ollama.Client(host=OLLAMA_HOST)
+
+
+@app.get("/api/tags")  # Renamed endpoint
+def list_ollama_tags() -> JSONResponse:
+    """Return available Ollama models (tags)."""
+    try:
+        logging.info(f"Attempting to list models from Ollama at {OLLAMA_HOST}...")
+        
+        # Use the configured client to make the call.
+        data = client.list()
+        
+        # This logic correctly parses the response from client.list().
+        names = [m.get("name") for m in data.get("models", []) if m.get("name")]
+        logging.info(f"Successfully retrieved models: {names}")
+        
+        return JSONResponse({"ok": True, "models": names})
+
+    except Exception as e:
+        logging.error(f"Failed to connect to Ollama: {e}", exc_info=True)
+        return JSONResponse({"ok": False, "error": "Could not connect to Ollama service."}, status_code=500)
+
+# @app.get("/api/models")
+# def list_models() -> JSONResponse:
+#     """Return available Ollama models (for a UI dropdown)."""
+#     try:
+#         data = ollama.list()  # {'models': [{'name': 'llama3.2:1b', ...}, ...]}
+#         names = [m.get("name") for m in data.get("models", []) if m.get("name")]
+#         return JSONResponse({"ok": True, "models": names})
+#     except Exception as e:
+#         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 # ---------- Ingest (non-streaming JSON) ----------
@@ -323,3 +388,12 @@ def ask_stream(
 
 # ---------- Static frontend at root ----------
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+
+
+# ---------- Favicon (silence 404s) ----------
+@app.get("/favicon.ico")
+def favicon():
+    fav = FRONTEND_DIR / "favicon.ico"
+    if fav.exists():
+        return FileResponse(fav)
+    return HTMLResponse(status_code=204, content="")
