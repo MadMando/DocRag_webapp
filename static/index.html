@@ -58,7 +58,7 @@
     <fieldset>
       <legend>Ingest</legend>
       <label>URL</label>
-      <input id="url" placeholder="https://arxiv.org/pdf/2408.09869" />
+      <input id="url" placeholder="https://arxiv.org/pdf/2508.20755" />
       <button id="ingest-url">Ingest URL (stream)</button>
 
       <label>File</label>
@@ -70,7 +70,7 @@
     <fieldset>
       <legend>Ask</legend>
       <label>Question</label>
-      <input id="question" value="Give a concise bullet summary of the paper's main contributions." />
+      <input id="question" value="Give me a short summary and 5 bullets points of the main idea. " />
       <button id="ask">Ask (non-streaming)</button>
       <button id="ask-stream">Ask (streaming)</button>
       <label>Answer</label>
@@ -103,8 +103,8 @@
           persist: v('persist'),
           collection: v('collection'),
           embed_model: v('embed'),
-          chunk_chars: '900',
-          chunk_overlap: '180'
+          chunk_chars: '500',
+          chunk_overlap: '100'
         });
         const r = await fetch('/api/ingest/url_stream?' + params.toString());
         if(!r.ok || !r.body){ setError('Stream failed to start'); return; }
@@ -139,8 +139,8 @@
         fd.set('persist', v('persist'));
         fd.set('collection', v('collection'));
         fd.set('embed_model', v('embed'));
-        fd.set('chunk_chars', '900');
-        fd.set('chunk_overlap', '180');
+        fd.set('chunk_chars', '500');
+        fd.set('chunk_overlap', '100');
 
         const r = await fetch('/api/ingest/file_stream', { method:'POST', body: fd });
         if(!r.ok || !r.body){ setError('Stream failed to start'); return; }
