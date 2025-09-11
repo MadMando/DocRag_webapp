@@ -1,4 +1,3 @@
-# app.py
 from __future__ import annotations
 
 import hashlib
@@ -16,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 # ---- Docling
 from docling.document_converter import DocumentConverter
+from docling_core.transforms.chunker import HierarchicalChunker
 
 # ---- Chroma (new client API)
 from chromadb import PersistentClient
@@ -31,6 +31,7 @@ DEFAULT_PERSIST = os.getenv("DOCRAG_PERSIST", "./.chroma")
 DEFAULT_COLLECTION = os.getenv("DOCRAG_COLLECTION", "web")
 DEFAULT_EMBED = os.getenv("DOCRAG_EMBED", "nomic-embed-text")
 DEFAULT_LLM = os.getenv("DOCRAG_LLM", "llama3.2:1b")
+# Retained for backward compatibility with your environment vars, but **ignored** by HierarchicalChunker
 DEFAULT_CHUNK_CHARS = int(os.getenv("DOCRAG_CHUNK_CHARS", "500"))
 DEFAULT_CHUNK_OVERLAP = int(os.getenv("DOCRAG_CHUNK_OVERLAP", "100"))
 DEFAULT_TOP_K = int(os.getenv("DOCRAG_TOP_K", "2"))
@@ -38,7 +39,7 @@ DEFAULT_TOP_K = int(os.getenv("DOCRAG_TOP_K", "2"))
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "static"  # must contain index.html
 
-app = FastAPI(title="DocRAG Web API", version="1.2")
+app = FastAPI(title="DocRAG Web API", version="1.3")
 
 # CORS for local dev (tighten in prod)
 app.add_middleware(
@@ -60,8 +61,8 @@ def _ensure_frontend():
     if not index.exists():
         index.write_text(
             """<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang=\"en\"><head>
+<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>DocRAG Web</title>
 <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2rem}
 code{background:#f4f4f4;padding:.2rem .4rem;border-radius:.25rem}</style>
@@ -79,6 +80,7 @@ code{background:#f4f4f4;padding:.2rem .4rem;border-radius:.25rem}</style>
 # =========================
 class OllamaEmbeddingFunction(EmbeddingFunction):
     """Chroma embedding function that calls a local Ollama embedding model."""
+
     def __init__(self, model: str = DEFAULT_EMBED):
         self.model = model
 
@@ -88,38 +90,6 @@ class OllamaEmbeddingFunction(EmbeddingFunction):
             resp = ollama.embeddings(model=self.model, prompt=text)
             out.append(resp["embedding"])
         return out
-
-
-def chunk_text(text: str, target_chars: int, overlap: int) -> List[str]:
-    """Sentence-aware chunking with overlap."""
-    sentences = re.split(r"(?<=[\.\?\!])\s+", text.strip())
-    chunks: List[str] = []
-    buf: List[str] = []
-    size = 0
-    for s in sentences:
-        s_len = len(s)
-        if size + s_len + 1 > target_chars and buf:
-            chunk = " ".join(buf).strip()
-            if chunk:
-                chunks.append(chunk)
-            if overlap > 0 and chunk:
-                tail = chunk[-overlap:]
-                buf = [tail, s]
-                size = len(tail) + s_len
-            else:
-                buf = [s]
-                size = s_len
-        else:
-            buf.append(s)
-            size += s_len + 1
-    if buf:
-        chunk = " ".join(buf).strip()
-        if chunk:
-            chunks.append(chunk)
-    if not chunks:
-        # Fallback
-        chunks = [text[i:i + target_chars] for i in range(0, len(text), target_chars)]
-    return chunks
 
 
 def _hash_id(s: str) -> str:
@@ -134,13 +104,25 @@ def _chroma_collection(persist: str, collection: str, embed_model: str):
     return col
 
 
-def _docling_convert(source: str) -> str:
+# --- Docling conversion + **Hierarchical** chunking (Option A)
+# Accepts either a local path or a URL; lets Docling handle the source type.
+def _docling_chunks(source: str) -> List[str]:
     conv = DocumentConverter()
-    res = conv.convert(source)
-    md = res.document.export_to_markdown()
-    if not md or not md.strip():
-        raise RuntimeError("Docling returned empty text.")
-    return md
+    res = conv.convert(source)            # DoclingDocumentResult
+    dl_doc = res.document                 # DoclingDocument
+
+    # Structure-aware chunking: respects headings, sections, lists, tables, etc.
+    chunker = HierarchicalChunker()
+    chunks = [c.text for c in chunker.chunk(dl_doc)]
+
+    # Safety: if Docling produced nothing (rare), fall back to markdown export in one chunk
+    if not chunks:
+        md = dl_doc.export_to_markdown() or ""
+        if md.strip():
+            chunks = [md]
+        else:
+            raise RuntimeError("Docling returned empty text.")
+    return chunks
 
 
 def _index_chunks(col, chunks: List[str], source_tag: str) -> int:
@@ -169,11 +151,7 @@ def _retrieve(col, query: str, top_k: int) -> List[str]:
 # API
 # =========================
 
-import os
 import logging
-import ollama
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 
 # --- Configuration ---
 # Use an environment variable for the host, with a sensible default.
@@ -183,7 +161,6 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 logging.basicConfig(level=logging.INFO)
 
 # Create a single, explicit client for the app to use.
-app = FastAPI()
 client = ollama.Client(host=OLLAMA_HOST)
 
 
@@ -192,29 +169,19 @@ def list_ollama_tags() -> JSONResponse:
     """Return available Ollama models (tags)."""
     try:
         logging.info(f"Attempting to list models from Ollama at {OLLAMA_HOST}...")
-        
+
         # Use the configured client to make the call.
         data = client.list()
-        
+
         # This logic correctly parses the response from client.list().
         names = [m.get("name") for m in data.get("models", []) if m.get("name")]
         logging.info(f"Successfully retrieved models: {names}")
-        
+
         return JSONResponse({"ok": True, "models": names})
 
     except Exception as e:
         logging.error(f"Failed to connect to Ollama: {e}", exc_info=True)
         return JSONResponse({"ok": False, "error": "Could not connect to Ollama service."}, status_code=500)
-
-# @app.get("/api/models")
-# def list_models() -> JSONResponse:
-#     """Return available Ollama models (for a UI dropdown)."""
-#     try:
-#         data = ollama.list()  # {'models': [{'name': 'llama3.2:1b', ...}, ...]}
-#         names = [m.get("name") for m in data.get("models", []) if m.get("name")]
-#         return JSONResponse({"ok": True, "models": names})
-#     except Exception as e:
-#         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 # ---------- Ingest (non-streaming JSON) ----------
@@ -224,12 +191,11 @@ def ingest_url(
     persist: str = Form(DEFAULT_PERSIST),
     collection: str = Form(DEFAULT_COLLECTION),
     embed_model: str = Form(DEFAULT_EMBED),
-    chunk_chars: int = Form(DEFAULT_CHUNK_CHARS),
-    chunk_overlap: int = Form(DEFAULT_CHUNK_OVERLAP),
+    chunk_chars: int = Form(DEFAULT_CHUNK_CHARS),       # kept for API compat; ignored
+    chunk_overlap: int = Form(DEFAULT_CHUNK_OVERLAP),   # kept for API compat; ignored
 ) -> Dict[str, Any]:
     try:
-        text = _docling_convert(url)
-        chunks = chunk_text(text, chunk_chars, chunk_overlap)
+        chunks = _docling_chunks(url)
         col = _chroma_collection(persist, collection, embed_model)
         added = _index_chunks(col, chunks, source_tag=_hash_id(url))
         return {"ok": True, "chunks_added": added, "source": url}
@@ -243,8 +209,8 @@ async def ingest_file(
     persist: str = Form(DEFAULT_PERSIST),
     collection: str = Form(DEFAULT_COLLECTION),
     embed_model: str = Form(DEFAULT_EMBED),
-    chunk_chars: int = Form(DEFAULT_CHUNK_CHARS),
-    chunk_overlap: int = Form(DEFAULT_CHUNK_OVERLAP),
+    chunk_chars: int = Form(DEFAULT_CHUNK_CHARS),       # kept for API compat; ignored
+    chunk_overlap: int = Form(DEFAULT_CHUNK_OVERLAP),   # kept for API compat; ignored
 ) -> Dict[str, Any]:
     suffix = Path(file.filename or "upload").suffix or ".bin"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -252,8 +218,7 @@ async def ingest_file(
         tmp.write(content)
         tmp_path = tmp.name
     try:
-        text = _docling_convert(tmp_path)
-        chunks = chunk_text(text, chunk_chars, chunk_overlap)
+        chunks = _docling_chunks(tmp_path)
         col = _chroma_collection(persist, collection, embed_model)
         added = _index_chunks(col, chunks, source_tag=_hash_id(file.filename or tmp_path))
         return {"ok": True, "chunks_added": added, "filename": file.filename}
@@ -273,16 +238,16 @@ def ingest_url_stream(
     persist: str = DEFAULT_PERSIST,
     collection: str = DEFAULT_COLLECTION,
     embed_model: str = DEFAULT_EMBED,
-    chunk_chars: int = DEFAULT_CHUNK_CHARS,
-    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    chunk_chars: int = DEFAULT_CHUNK_CHARS,      # kept for API compat; ignored
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,  # kept for API compat; ignored
 ):
     def gen() -> Generator[bytes, None, None]:
         try:
             yield _sse({"phase": "start", "progress": 0, "msg": "Starting"})
             yield _sse({"phase": "convert", "progress": 20, "msg": "Converting with Docling"})
-            text = _docling_convert(url)
-            yield _sse({"phase": "chunk", "progress": 40, "msg": "Chunking text"})
-            chunks = chunk_text(text, chunk_chars, chunk_overlap)
+            # Convert + chunk with Docling (structure-aware)
+            yield _sse({"phase": "chunk", "progress": 40, "msg": "Chunking with Docling (Hierarchical)"})
+            chunks = _docling_chunks(url)
             yield _sse({"phase": "index", "progress": 70, "msg": "Indexing into Chroma"})
             col = _chroma_collection(persist, collection, embed_model)
             added = _index_chunks(col, chunks, source_tag=_hash_id(url))
@@ -298,8 +263,8 @@ async def ingest_file_stream(
     persist: str = DEFAULT_PERSIST,
     collection: str = DEFAULT_COLLECTION,
     embed_model: str = DEFAULT_EMBED,
-    chunk_chars: int = DEFAULT_CHUNK_CHARS,
-    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    chunk_chars: int = DEFAULT_CHUNK_CHARS,      # kept for API compat; ignored
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,  # kept for API compat; ignored
 ):
     suffix = Path(file.filename or "upload").suffix or ".bin"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -311,9 +276,8 @@ async def ingest_file_stream(
         try:
             yield _sse({"phase": "start", "progress": 0, "msg": "Starting"})
             yield _sse({"phase": "convert", "progress": 20, "msg": f"Converting {file.filename}"})
-            text = _docling_convert(tmp_path)
-            yield _sse({"phase": "chunk", "progress": 40, "msg": "Chunking text"})
-            chunks = chunk_text(text, chunk_chars, chunk_overlap)
+            yield _sse({"phase": "chunk", "progress": 40, "msg": "Chunking with Docling (Hierarchical)"})
+            chunks = _docling_chunks(tmp_path)
             yield _sse({"phase": "index", "progress": 70, "msg": "Indexing into Chroma"})
             col = _chroma_collection(persist, collection, embed_model)
             added = _index_chunks(col, chunks, source_tag=_hash_id(file.filename or tmp_path))
@@ -390,7 +354,12 @@ def ask_stream(
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
-# ---------- Favicon (silence 404s) ----------
+# ---------- Health & Favicon ----------
+@app.get("/api/health")
+def health():
+    return {"ok": True, "version": app.version}
+
+
 @app.get("/favicon.ico")
 def favicon():
     fav = FRONTEND_DIR / "favicon.ico"
