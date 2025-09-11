@@ -35,7 +35,7 @@ It wraps around the [docrag-llm](https://pypi.org/project/docrag-llm) package, p
 
 1. Clone or move into your `webapp` folder:
    ```bash
-   cd webapp
+   cd DocRag_webapp
    ```
 
 2. Create a virtual environment and install dependencies:
